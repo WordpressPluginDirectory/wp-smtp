@@ -14,14 +14,10 @@ abstract class AbstractController {
 
 	/**
 	 * Nonce name for each controller, default is a generic
+	 *
 	 * @var string
 	 */
 	protected string $nonce_name = 'solid-wp-nonce';
-
-	/**
-	 * Option name for version
-	 */
-	const OPTION_VERSION_NAME = 'solid_smtp_version';
 
 	/**
 	 * Register hooks.
@@ -57,12 +53,13 @@ abstract class AbstractController {
 	 * Retrieves input data, sanitizes it, and processes it by setting properties if possible.
 	 *
 	 * @param string $key The key of the input data.
+	 * @param string $default_value
 	 *
 	 * @return string
 	 */
-	protected function get_and_sanitize_input( string $key, $default = '' ): string {
+	protected function get_and_sanitize_input( string $key, string $default_value = '' ): string {
 		//phpcs:ignore
-		return sanitize_text_field( wp_unslash( $_REQUEST[ $key ] ?? $default ) );
+		return sanitize_text_field( wp_unslash( $_REQUEST[ $key ] ?? $default_value ) );
 	}
 
 	/**

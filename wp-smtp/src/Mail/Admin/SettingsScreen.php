@@ -19,22 +19,30 @@ class SettingsScreen {
 	 * Defines the setting for the Solid Mail settings, including type, description, default values, and REST schema.
 	 */
 	public function register_settings_screen() {
-		register_setting( self::SETTINGS_SLUG, self::SETTINGS_SLUG, [
-			'type'              => 'object',
-			'description'       => esc_html__( 'Solid Mail Settings', 'LION' ),
-			'sanitize_callback' => [ $this, 'sanitize_setting' ],
-			'default'           => $this->get_default_settings(),
-			'show_in_rest'      => [
-				'schema' => [
-					'properties' => [
-						'disable_logs' => [
-							'type'        => 'string',
-							'description' => esc_html__( 'Enable or disable logging of sent emails.', 'LION' ),
-						]
-					]
-				]
-			],
-		] );
+		register_setting(
+			self::SETTINGS_SLUG,
+			self::SETTINGS_SLUG,
+			[
+				'type'              => 'object',
+				'description'       => esc_html__( 'Solid Mail Settings', 'LION' ),
+				'sanitize_callback' => [ $this, 'sanitize_setting' ],
+				'default'           => $this->get_default_settings(),
+				'show_in_rest'      => [
+					'schema' => [
+						'properties' => [
+							'disable_logs'              => [
+								'type'        => 'string',
+								'description' => esc_html__( 'Enable or disable logging of sent emails.', 'LION' ),
+							],
+							'use_unmatched_connections' => [
+								'type'        => 'string',
+								'description' => esc_html__( 'If the default connection fails then an alternative connection will be used as a fallback. Connections with the same "from" address are prioritized.', 'LION' ),
+							],
+						],
+					],
+				],
+			] 
+		);
 	}
 
 	/**
@@ -53,6 +61,10 @@ class SettingsScreen {
 			$parse_args['disable_logs'] = 'no';
 		}
 
+		if ( ! in_array( $parse_args['use_unmatched_connections'], [ 'no', 'yes' ], true ) ) {
+			$parse_args['use_unmatched_connections'] = 'no';
+		}
+
 		return $parse_args;
 	}
 
@@ -65,7 +77,8 @@ class SettingsScreen {
 	 */
 	public function get_default_settings(): array {
 		return [
-			'disable_logs' => 'no'
+			'disable_logs'              => 'no',
+			'use_unmatched_connections' => 'no',
 		];
 	}
 

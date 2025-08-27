@@ -41,11 +41,11 @@ class LogsRepository {
 	 * @param array $params {
 	 *     Array of parameters for fetching email logs.
 	 *
-	 * @type int $page The page number for pagination (0-based index).
-	 * @type string $search_term The term to search for in email subjects, messages, and recipients.
-	 * @type string $orderby The column to order the results by. Default is 'timestamp'.
-	 * @type string $order The order direction ('ASC' or 'DESC'). Default is 'desc'.
-	 * @type int $per_page The number of items per page.
+	 *     @type int    $page        The page number for pagination (0-based index).
+	 *     @type string $search_term The term to search for in email subjects, messages, and recipients.
+	 *     @type string $orderby     The column to order the results by. Default is 'timestamp'.
+	 *     @type string $order       The order direction ('ASC' or 'DESC'). Default is 'desc'.
+	 *     @type int    $per_page    The number of items per page.
 	 * }
 	 *
 	 * @return array The array of email logs.
@@ -76,18 +76,20 @@ class LogsRepository {
 			);
 		}
 
+		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		// @TODO: Consider using wp_cache_get() / wp_cache_set() or wp_cache_delete()
 		$data = $wpdb->get_results(
 			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				"SELECT * FROM {$this->table} {$search_sql} ORDER BY {$valid_orderby} {$valid_order} LIMIT %d OFFSET %d",
 				$per_page,
 				$offset
 			),
 			ARRAY_A
 		);
-		// sometimes we need to serialize the array.
+
 		foreach ( $data as &$val ) {
-			$val['to'] = maybe_unserialize( $val['to'] );
-			$val['to'] = is_array( $val['to'] ) ? implode( ', ', $val['to'] ) : $val['to'];
+			$val = $this->parse_log( $val );
 		}
 
 		return $data;
@@ -112,17 +114,16 @@ class LogsRepository {
 
 		$data = $wpdb->get_results(
 			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				"SELECT * FROM {$this->table} WHERE `timestamp` BETWEEN %s AND %s ORDER BY `timestamp` ASC",
-				wp_date('Y-m-d H:i:s', $from),
-				wp_date('Y-m-d H:i:s', $to)
+				wp_date( 'Y-m-d H:i:s', $from ),
+				wp_date( 'Y-m-d H:i:s', $to )
 			),
 			ARRAY_A
 		);
 
-		// Process each result to format the 'to' field properly.
 		foreach ( $data as &$val ) {
-			$val['to'] = maybe_unserialize( $val['to'] );
-			$val['to'] = is_array( $val['to'] ) ? implode( ', ', $val['to'] ) : $val['to'];
+			$val = $this->parse_log( $val );
 		}
 
 		return $data;
@@ -162,6 +163,7 @@ class LogsRepository {
 
 		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
 		$results      = $wpdb->query(
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
 			$wpdb->prepare( "DELETE FROM {$this->table} WHERE mail_id IN ($placeholders)", $ids )
 		);
 
@@ -194,8 +196,43 @@ class LogsRepository {
 
 		return absint(
 			$wpdb->get_var(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				"SELECT COUNT(*) FROM {$this->table} $search_sql"
 			)
 		);
+		// phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+	}
+
+	/**
+	 * Clears all email logs from the database.
+	 *
+	 * This method deletes all log entries from the wp_wpsmtp_logs table.
+	 * Use with caution as this operation cannot be undone.
+	 *
+	 * @return bool True if the logs were successfully cleared, false otherwise.
+	 */
+	public function clear_all_logs(): bool {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$result = $wpdb->query( "TRUNCATE TABLE {$this->table}" );
+
+		return $result !== false;
+	}
+
+	protected function parse_log( array $raw ) {
+		return [
+			'mail_id'       => $raw['mail_id'],
+			'timestamp'     => $raw['timestamp'],
+			'to'            => json_decode( $raw['to'], true ) ?: [ $raw['to'] ],
+			'subject'       => $raw['subject'],
+			'message'       => $raw['message'],
+			'headers'       => json_decode( $raw['headers'], true ) ?: $raw['headers'],
+			'content_type'  => $raw['content_type'],
+			'error'         => $raw['error'],
+			'connection_id' => $raw['connection_id'],
+			'from_email'    => $raw['from_email'],
+			'from_name'     => $raw['from_name'],
+		];
 	}
 }

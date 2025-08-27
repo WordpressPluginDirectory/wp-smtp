@@ -2,7 +2,6 @@
 
 namespace WPSMTP\Logger;
 
-
 class Db {
 
 	private $db;
@@ -23,25 +22,20 @@ class Db {
 	private function __construct() {
 		global $wpdb;
 
-		$this->db = $wpdb;
+		$this->db    = $wpdb;
 		$this->table = $wpdb->prefix . 'wpsmtp_logs';
 	}
 
 	public function insert( $data ) {
-
-		array_walk( $data, function ( &$value, $key ) {
-			if ( is_array( $value ) ) {
-				$value = maybe_serialize( $value );
-			}
-		});
-
+		$prepared   = $this->prepare_for_database( $data );
 		$result_set = $this->db->insert(
 			$this->table,
-			$data,
-			array_fill( 0, count( $data ), '%s' )
+			$prepared,
+			array_fill( 0, count( $prepared ), '%s' )
 		);
 
 		if ( ! $result_set ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			error_log( 'WP SMTP Log insert error: ' . $this->db->last_error );
 
 			return false;
@@ -50,122 +44,69 @@ class Db {
 		return $this->db->insert_id;
 	}
 
-	public function update( $data, $where = array() ) {
-		array_walk( $data, function ( &$value, $key ) {
-			if ( is_array( $value ) ) {
-				$value = maybe_serialize( $value );
-			}
-		});
+	public function update( $data, $where = [] ): void {
+		$prepared = $this->prepare_for_database( $data );
 
 		$this->db->update(
 			$this->table,
-			$data,
+			$prepared,
 			$where,
-			array_fill( 0, count( $data ), '%s' ),
-			array( '%d' )
+			array_fill( 0, count( $prepared ), '%s' ),
+			[ '%d' ]
 		);
 	}
 
-	public function get_item( $id ) {
-		$sql = sprintf( "SELECT * from {$this->table} WHERE `id` = '%d';", $id );
-
-		return $this->db->get_results( $sql, ARRAY_A );
-
-	}
-
-	public function get() {
-		$where = '';
-		$where_cols = array();
-		$prepare_array = array();
-
-		if ( isset($_GET['search']['value'] ) && ! empty( $_GET['search']['value'] ) ) {
-			$search = sanitize_text_field( $_GET['search']['value'] );
-
-			foreach ( $_GET['columns'] as $key => $col ) {
-				if ( $col['searchable'] && ! empty( $col['data'] ) && $col['data'] !== 'timestamp' ) {
-					$column          = sanitize_text_field( wp_unslash( $col['data'] ) );
-					if ( ! in_array( $column, $this->get_allowed_columns(), true ) ) {
-						// the column is not in the list, moving.
-						continue;
-					}
-					$where_cols[]    = "`{$column}` LIKE %s";
-					$prepare_array[] = '%' . $this->db->esc_like( $search ) . '%';
-				}
-			}
-
-			if ( ! empty( $where_cols ) ) {
-				$where = implode( ' OR ', $where_cols );
-			}
-
-		}
-
-		$limit = array();
-		if ( isset( $_GET['start'] ) ) {
-			$limit[] = absint( $_GET['start'] );
-		}
-
-		if ( isset( $_GET['length'] ) ) {
-			$limit[] = absint( $_GET['length'] );
-		}
-
-		$limit_query = '';
-		if ( ! empty( $limit ) ) {
-			$limit_query = implode( ',', $limit );
-		}
-
-		$orderby = 'timestamp';
-		$order = 'DESC';
-
-		if ( ! empty( $_GET['order'][0] ) ) {
-			$col_num   = absint( $_GET['order'][0]['column'] );
-			$col_name  = sanitize_text_field( wp_unslash( $_GET['columns'][$col_num]['data'] ) );
-			$order_dir = strtolower( sanitize_text_field( wp_unslash( $_GET['order'][0]['dir'] ) ) );
-			if ( in_array( $order_dir, [
-					'asc',
-					'desc'
-				], true ) && in_array( $col_name, $this->get_allowed_columns(), true ) ) {
-				$orderby = "`{$col_name}`";
-				$order   = "{$order_dir}";
-			}
-		}
-
-		// If there is something to search for we need to add the search query to the query.
-		if ( ! empty( $prepare_array ) ) {
-			$sql = $this->db->prepare( "SELECT * from {$this->table} WHERE {$where} ORDER BY {$orderby} {$order} LIMIT {$limit_query};", $prepare_array );
-		} else {
-			$sql = $this->db->prepare( "SELECT * from {$this->table} ORDER BY {$orderby} {$order} LIMIT {$limit_query};", $orderby );
-		}
-
-		return $this->db->get_results( $sql, ARRAY_A );
-
-	}
-
 	/**
-	 * Retrieve an array of allowed columns for sorting and query in the wp_wpsmtp_logs table.
+	 * This function takes the raw values passed to {@see wp_mail()}
+	 * and applies similar normalization to what Core does.
 	 *
-	 * @return string[]
+	 * @param array $raw
+	 *
+	 * @return array
 	 */
-	private function get_allowed_columns():array {
+	protected function prepare_for_database( array $raw ) {
+		$to      = $raw['to'] ?? [];
+		$headers = $raw['headers'] ?? [];
+
+		if ( ! is_array( $to ) ) {
+			$to = explode( ',', $to );
+		}
+
+		if ( ! is_array( $headers ) ) {
+			$headers = explode( "\n", str_replace( "\r\n", "\n", $headers ) );
+		}
+
+		$headers = $this->parse_headers( $headers );
+
 		return [
-			'mail_id',
-			'timestamp',
-			'to',
-			'subject',
-			'message',
-			'headers',
-			'error'
+			'to'            => wp_json_encode( $to ),
+			'subject'       => (string) ( $raw['subject'] ?? '' ),
+			'message'       => (string) ( $raw['message'] ?? '' ),
+			'headers'       => wp_json_encode( $headers ),
+			'content_type'  => (string) ( $raw['content_type'] ?? '' ),
+			'error'         => isset( $raw['error'] ) ? sanitize_text_field( $raw['error'] ) : '',
+			'connection_id' => (string) ( $raw['connection_id'] ?? '' ),
+			'from_email'    => (string) ( $raw['from_email'] ?? '' ),
+			'from_name'     => (string) ( $raw['from_name'] ?? '' ),
 		];
 	}
 
-	public function delete_items( $ids ) {
-		return $this->db->query( "DELETE FROM {$this->table} WHERE mail_id IN(" . implode(',', $ids) . ")" );
-	}
+	protected function parse_headers( array $headers ) {
+		$parsed = [];
 
-	public function delete_all_items() {
-		return $this->db->query( "TRUNCATE {$this->table};" );
-	}
+		foreach ( $headers as $header ) {
+			if ( strpos( $header, ':' ) === false ) {
+				continue;
+			}
 
-	public function records_count() {
-		return $this->db->get_var( "SELECT COUNT(*) FROM {$this->table};" );
+			[ $name, $content ] = explode( ':', trim( $header ), 2 );
+
+			$name    = trim( $name );
+			$content = trim( $content );
+
+			$parsed[ strtolower( $name ) ] = $content;
+		}
+
+		return $parsed;
 	}
 }
